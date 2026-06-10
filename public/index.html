@@ -25,7 +25,6 @@
             box-sizing: border-box;
         }
 
-        /* 🚪 Lobby Auth Panel Layout */
         .auth-container { max-width: 450px; width: 100%; text-align: center; }
         .avatar-pool { display: flex; justify-content: center; gap: 15px; margin: 15px 0; }
         .avatar-option { font-size: 2rem; padding: 10px; border: 2px solid transparent; border-radius: 12px; cursor: pointer; background: rgba(255,255,255,0.05); transition: 0.2s; }
@@ -59,7 +58,6 @@
 
         @media (max-width: 768px) {
             .game-deck { grid-template-columns: 1fr; gap: 15px; }
-            h2 { font-size: 1.3rem; display: flex; flex-direction: column; gap: 10px; }
         }
     </style>
 </head>
@@ -90,11 +88,12 @@
     <div id="game-screen" class="game-deck" style="display: none;">
         <div class="lang-bar">
             <div>
-                <b style="color:var(--neon-gold)">ROOM TERMINAL: </b>
+                <b style="color:var(--neon-gold)">ROOM: </b>
                 <span id="display-room-code" style="font-size:1.2rem; font-weight:bold; letter-spacing:2px; color:white; background:rgba(255,255,255,0.1); padding:4px 10px; border-radius:6px;">----</span>
             </div>
             <div>
-                <button onclick="toggleAudio()" id="btn-audio-toggle" style="background:none; border:1px solid var(--border); color:white; border-radius:8px; padding:6px 12px; cursor:pointer; font-size:0.85rem; margin-right:10px;">🔊 Audio: ON</button>
+                <button onclick="actionLeaveRoom()" id="btn-leave-room" style="background:var(--neon-red); border:none; color:white; border-radius:8px; padding:6px 12px; cursor:pointer; font-size:0.85rem; font-weight:bold; margin-right:5px;">🚪 Leave Room</button>
+                <button onclick="toggleAudio()" id="btn-audio-toggle" style="background:none; border:1px solid var(--border); color:white; border-radius:8px; padding:6px 12px; cursor:pointer; font-size:0.85rem; margin-right:5px;">🔊 Audio: ON</button>
                 <select class="lang-select" id="lang-trigger" onchange="switchLanguage()">
                     <option value="en">English</option>
                     <option value="mm">မြန်မာဘာသာ</option>
@@ -162,8 +161,9 @@
         let playerPoolCache = [];
         let selectedAvatarSymbol = '🕵️';
         let audioMuted = false;
+        let myName = '';
 
-        // 🔊 Idea 4: Synthesized SFX Sound Engine (No assets required, uses HTML5 Web Audio API)
+        // 🔊 Synthesized SFX Sound Engine (HTML5 Web Audio API)
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         function playSound(type) {
             if (audioMuted) return;
@@ -171,34 +171,35 @@
             const gain = audioCtx.createGain();
             osc.connect(gain); gain.connect(audioCtx.destination);
 
-            if (type === 'start') { // Access notification beep
-                osc.type = 'sine'; osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
-                osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1); // A5
+            if (type === 'start') {
+                osc.type = 'sine'; osc.frequency.setValueAtTime(587.33, audioCtx.currentTime);
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1);
                 gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.3);
-            } else if (type === 'vote') { // Ticking sound
+            } else if (type === 'vote') {
                 osc.type = 'triangle'; osc.frequency.setValueAtTime(220, audioCtx.currentTime);
                 gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.1);
-            } else if (type === 'win') { // Victory chime
-                osc.type = 'triangle'; osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
-                osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
-                osc.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+            } else if (type === 'win') {
+                osc.type = 'triangle'; osc.frequency.setValueAtTime(523.25, audioCtx.currentTime);
+                osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1);
+                osc.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2);
                 gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.4);
-            } else if (type === 'fail') { // Warning / Game Over drop
+            } else if (type === 'fail') {
                 osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, audioCtx.currentTime);
                 osc.frequency.linearRampToValueAtTime(70, audioCtx.currentTime + 0.4);
                 gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.4);
             }
         }
+
         function toggleAudio() {
             audioMuted = !audioMuted;
             document.getElementById('btn-audio-toggle').innerText = audioMuted ? "🔇 Audio: OFF" : "🔊 Audio: ON";
         }
 
-        // 💾 Idea 5: Persistent Profile System Initialization
+        // 💾 LocalStorage Profile Caching
         window.onload = () => {
             const cachedName = localStorage.getItem('cyberspy_name');
             if (cachedName) {
@@ -215,11 +216,10 @@
         function getProfileData() {
             const nameInput = document.getElementById('auth-name-input').value.trim();
             const finalName = nameInput || "Agent_" + Math.floor(Math.random()*100);
-            localStorage.setItem('cyberspy_name', finalName); // Save to LocalStorage
+            localStorage.setItem('cyberspy_name', finalName);
             return { username: finalName, avatar: selectedAvatarSymbol };
         }
 
-        // Idea 1 Actions: Create vs Join Room Connectors
         function actionCreateRoom() {
             const profile = getProfileData();
             socket.emit('createRoom', profile);
@@ -230,6 +230,27 @@
             if(!code) { alert("Please input a 4-letter room code!"); return; }
             const profile = getProfileData();
             socket.emit('joinRoom', { roomCode: code, ...profile });
+        }
+
+        // 🚪 Leave Room Functionality
+        function actionLeaveRoom() {
+            if (confirm(currentLang === 'en' ? "Are you sure you want to leave this room?" : "ယခုအခန်းထဲမှ ထွက်ခွာရန် သေချာပါသလား?")) {
+                socket.emit('leaveRoom');
+                resetToLobbyUI();
+            }
+        }
+
+        function resetToLobbyUI() {
+            document.getElementById('game-screen').style.display = "none";
+            document.getElementById('lobby-screen').style.display = "block";
+            myRoleState = 'UNKNOWN';
+            document.getElementById('my-role').innerText = "UNKNOWN";
+            document.getElementById('my-role').style.color = "#38bdf8";
+            document.getElementById('game-status').innerText = "WAITING";
+            document.getElementById('game-status').style.color = "#64748b";
+            document.getElementById('topic-area').style.display = "none";
+            document.getElementById('btn-vote-phase').style.display = "none";
+            document.getElementById('btn-play-again').style.display = "none";
         }
 
         socket.on('roomJoined', (data) => {
@@ -293,7 +314,7 @@
             myRoleState = gameData.role;
             playerPoolCache = gameData.allPlayers;
             
-            playSound('start'); // 🔊 Play match opening SFX
+            playSound('start');
 
             document.getElementById('chat-area').innerHTML = `<span style="color:var(--neon-gold)">📡 -- Mainframe Refreshed. New Round Initiated. --</span>`;
             document.getElementById('voting-deck-internal').innerHTML = `<h3 id="lbl-vote-head">${dictionary[currentLang].voteHead}</h3><div class="vote-pool" id="vote-buttons-container"></div>`;
@@ -340,17 +361,17 @@
         }
 
         socket.on('spyPromptGuessingPhase', (data) => {
-            playSound('fail'); // Spy threat alert beep
+            playSound('fail');
             document.getElementById('voting-deck').style.display = "none";
             document.getElementById('btn-vote-phase').style.display = "none";
             document.getElementById('spy-guess-deck').style.display = "block";
 
             const instruction = document.getElementById('spy-guess-instruction');
             if (myName === data.spyName) {
-                instruction.innerHTML = `⚠️ <b>You have been caught!</b> But you have 1 chance to hack the system. Guess the Citizens' secret topic to hijack the victory points!`;
+                instruction.innerHTML = `⚠️ <b>You have been caught!</b> Guess the Citizens' secret topic to hijack the victory points!`;
                 document.getElementById('spy-input-controls').style.display = "flex";
             } else {
-                instruction.innerHTML = `🎯 <b>Spy Found!</b> Player <b>${data.spyName}</b> was caught. We are waiting for them to guess the secret keyword...`;
+                instruction.innerHTML = `🎯 <b>Spy Found!</b> Player <b>${data.spyName}</b> was caught. Waiting for their bluff guess...`;
                 document.getElementById('spy-input-controls').style.display = "none";
             }
         });
@@ -372,23 +393,23 @@
             myRoleState = 'UNKNOWN';
             renderLeaderboard(results.scoreboard);
 
-            // 🔊 Trigger dynamic win/fail sound based on match end state
-            if (results.spyWon) {
-                playSound('fail');
-            } else {
-                playSound('win');
-            }
+            if (results.spyWon) playSound('fail'); else playSound('win');
 
             let statusMessage = results.spyWon 
-                ? `<div style="background:rgba(239,68,68,0.2); padding:15px; border-radius:10px; border:1px solid var(--neon-red); margin:10px 0;">🔴 <b>GAME OVER! The Spy Won (+25 pts)!</b><br>Spy Master: <b>${results.spyName}</b> bypassed the network.<br>Secret Keyword was: <b>${results.secretAnswer}</b></div>`
-                : `<div style="background:rgba(16,185,129,0.2); padding:15px; border-radius:10px; border:1px solid var(--neon-green); margin:10px 0;">🟢 <b>VICTORY! Citizens & Undercover Won (+10 pts)!</b><br>The Spy failed the counter-hack!<br>Actual Spy Master: <b>${results.spyName}</b><br>Secret Keyword was: <b>${results.secretAnswer}</b></div>`;
+                ? `<div style="background:rgba(239,68,68,0.2); padding:15px; border-radius:10px; border:1px solid var(--neon-red); margin:10px 0;">🔴 <b>GAME OVER! The Spy Won (+25 pts)!</b><br>Spy Master: <b>${results.spyName}</b><br>Secret Keyword: <b>${results.secretAnswer}</b></div>`
+                : `<div style="background:rgba(16,185,129,0.2); padding:15px; border-radius:10px; border:1px solid var(--neon-green); margin:10px 0;">🟢 <b>VICTORY! Citizens Won (+10 pts)!</b><br>Spy Master: <b>${results.spyName}</b><br>Secret Keyword: <b>${results.secretAnswer}</b></div>`;
 
             document.getElementById('chat-area').innerHTML += statusMessage;
             document.getElementById('chat-area').scrollTop = document.getElementById('chat-area').scrollHeight;
         });
 
         function requestNextRound() { socket.emit('requestPlayAgain'); }
-        socket.on('gameReset', () => { alert("Operational requirements dropped. Room Reset."); window.location.reload(); });
+
+        socket.on('gameResetNotification', () => {
+            alert(currentLang === 'en' ? "An operative left. Match reset due to insufficient players." : "ကစားသမားတစ်ဦး ထွက်သွားသောကြောင့် ပွဲစဉ်ကို ရပ်ဆိုင်းလိုက်ပါပြီ။");
+            resetToLobbyUI();
+            window.location.reload();
+        });
 
         function sendMsg() {
             const msg = document.getElementById('user-msg').value;

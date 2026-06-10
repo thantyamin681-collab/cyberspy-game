@@ -4,11 +4,9 @@ const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 const path = require('path');
 
+// Static Files များကို public ဖိုဒါထဲတွင် ရှာရန်
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
 // 🗂️ Rooms Database (အခန်းများအားလုံး၏ အချက်အလက် သိုလှောင်မှု)
 let rooms = {}; 
 
@@ -24,6 +22,11 @@ const topicPairs = [
     { citizen: "Buying expensive shoes (ဈေးကြီးတဲ့ဖိနပ်ဝယ်ခြင်း)", undercover: "Buying luxury watch (ဈေးကြီးတဲ့လက်ပတ်နာရီဝယ်ခြင်း)" },
     { citizen: "Stalking an Ex (ရည်းစားဟောင်းအကောင့် ချောင်းခြင်း)", undercover: "Stalking a Crush (Crush အကောင့်ကို လိုက်ချောင်းခြင်း)" }
 ];
+
+// Web Browser တွင် Refresh နှိပ်ပါက Error မတက်စေရန် Catch-All Route ထည့်သွင်းခြင်း
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 io.on('connection', (socket) => {
     let currentRoomCode = null;
@@ -127,110 +130,36 @@ io.on('connection', (socket) => {
         }
     });
 
+    // 🚪 အခန်းထဲမှ ထွက်ခွာခြင်း (Leave Room Logic)
+    socket.on('leaveRoom', () => {
+        handleUserExit(socket);
+    });
+
+    // 🔌 လိုင်းကျသွားခြင်း သို့မဟုတ် Browser ပိတ်လိုက်ခြင်း
     socket.on('disconnect', () => {
+        handleUserExit(socket);
+    });
+
+    function handleUserExit(socket) {
         if (currentRoomCode && rooms[currentRoomCode]) {
             const room = rooms[currentRoomCode];
             room.users = room.users.filter(user => user.id !== socket.id);
+            
             io.to(currentRoomCode).emit('updateUsers', { users: room.users, scoreboard: room.leaderboards });
             
-            if (room.users.length < 3) {
+            if (room.users.length < 3 && room.isGameActive) {
                 room.isGameActive = false;
-                io.to(currentRoomCode).emit('gameReset');
+                io.to(currentRoomCode).emit('gameResetNotification');
             }
             if (room.users.length === 0) {
-                delete rooms[currentRoomCode]; // Delete empty room from memory
+                delete rooms[currentRoomCode];
             }
+            socket.leave(currentRoomCode);
+            currentRoomCode = null;
         }
-    });
+    }
 });
 
-function startGame(roomCode) {
-    const room = rooms[roomCode];
-    room.isGameActive = true;
-    room.votes = {};
-    room.totalVotesReceived = 0;
-
-    const indices = Array.from({length: room.users.length}, (_, i) => i);
-    const spyIdx = indices.splice(Math.floor(Math.random() * indices.length), 1)[0];
-    
-    let undercoverIdx = -1;
-    if (room.users.length >= 4) {
-        undercoverIdx = indices.splice(Math.floor(Math.random() * indices.length), 1)[0];
-    }
-
-    room.currentRoundTopicPair = topicPairs[Math.floor(Math.random() * topicPairs.length)];
-
-    room.users.forEach((user, index) => {
-        if (index === spyIdx) {
-            user.role = 'SPY';
-            room.currentActualSpy = user;
-        } else if (index === undercoverIdx) {
-            user.role = 'Undercover';
-        } else {
-            user.role = 'Citizen';
-        }
-    });
-
-    room.users.forEach(user => {
-        let personalTopic = "???";
-        if (user.role === 'Citizen') personalTopic = room.currentRoundTopicPair.citizen;
-        if (user.role === 'Undercover') personalTopic = room.currentRoundTopicPair.undercover;
-
-        io.to(user.id).emit('gameStarted', {
-            role: user.role,
-            topic: personalTopic,
-            allPlayers: room.users.map(u => u.name)
-        });
-    });
-}
-
-function evaluateVotingResults(roomCode) {
-    const room = rooms[roomCode];
-    let highestVotes = 0;
-    let mostVotedPlayer = '';
-
-    for (let player in room.votes) {
-        if (room.votes[player] > highestVotes) {
-            highestVotes = room.votes[player];
-            mostVotedPlayer = player;
-        }
-    }
-
-    const spyObj = room.users.find(u => u.role === 'SPY');
-    
-    if (mostVotedPlayer === spyObj.name) {
-        io.to(roomCode).emit('spyPromptGuessingPhase', {
-            accused: mostVotedPlayer,
-            spyName: spyObj.name
-        });
-    } else {
-        awardPointsAndFinish(roomCode, true, mostVotedPlayer);
-    }
-}
-
-function awardPointsAndFinish(roomCode, spyWon, accused) {
-    const room = rooms[roomCode];
-    const actualSpy = room.users.find(u => u.role === 'SPY');
-
-    if (spyWon) {
-        if(room.leaderboards[actualSpy.name] !== undefined) room.leaderboards[actualSpy.name] += 25;
-    } else {
-        room.users.forEach(u => {
-            if (u.role !== 'SPY' && room.leaderboards[u.name] !== undefined) {
-                room.leaderboards[u.name] += 10;
-            }
-        });
-    }
-
-    io.to(roomCode).emit('votingFinished', {
-        accused: accused,
-        spyName: actualSpy.name,
-        spyWon: spyWon,
-        secretAnswer: room.currentRoundTopicPair.citizen,
-        scoreboard: room.leaderboards
-    });
-
-    room.isGameActive = false;
-}
-
-http.listen(5000, () => console.log('🚀 Room-Based Advanced Engine running on port 5000'));
+// Cloud Deployment ပေါ်တွင် Dynamic Port အသုံးပြုနိုင်ရန် သတ်မှတ်ခြင်း
+const PORT = process.env.PORT || 5000;
+http.listen(PORT, () => console.log(`🚀 Advanced Server is running on port ${PORT}`));
